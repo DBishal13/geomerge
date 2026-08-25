@@ -1,94 +1,132 @@
 # Geomerge
 
-> Topology-preserving offline sync for shared polygon edges — the cleanest, most uncontested whitespace in the set, and the weakest business case.
+> Topology-preserving offline sync for shared polygon edges.
 
-**Domain:** Edge & sync · **Tier:** 4 (long-horizon & capital-gated) · **Composite score:** 2.4/5
+Geomerge is a small conflict-free replication (CRDT) engine, sync service,
+and reference client for editing polygons — think land parcels, utility
+easements, or administrative boundaries — collaboratively and **offline**.
+Multiple people, or devices, can edit the same shape (or two shapes that
+share a boundary) independently with no network connection, and merge their
+edits back together automatically. The merge is guaranteed to never produce
+invalid geometry: it either resolves cleanly or tells you exactly which
+edits it couldn't reconcile, instead of silently handing back a broken
+shape.
 
-## Why this matters
-Genuinely uncontested. Two 2025–2026 academic papers (Geo-CRDT; Geometry-Aware CRDTs, IJGI) propose workable architectures using geometric vector clocks and minimum bounding rectangles, but neither is a shipped library. General CRDT libraries (Automerge, Yjs, Loro) have no topology-aware primitive — a naive field-by-field merge of shared vertices silently produces a self-intersecting polygon.
+## What problem this solves
 
-## Market signal
-No market sizing exists for this sub-niche; too new to be tracked separately from general local-first sync.
+Picture two survey crews editing the same parcel boundary offline — one
+each end of a shared edge, on separate devices, no signal. Both edits are
+individually reasonable. Naively merging them field-by-field (take
+whichever value came in, vertex by vertex — how a plain diff or a
+last-writer-wins merge works) can silently fold the polygon over itself: a
+self-intersecting "bowtie" shape that's invalid input to almost every
+downstream GIS tool.
 
-## Feasibility & time-to-MVP
-Genuinely novel, not an integration exercise. A research-grade MVP for one feature type (shared polygons only): 6–9 months. A robust general solution handling shared topology between adjacent features: 18–36 months.
+General-purpose CRDT libraries (Automerge, Yjs, Loro) solve the *merge*
+problem for text and JSON, but have no concept of geometric validity — they
+don't know a self-intersecting ring is wrong. Geomerge adds that layer on
+top of a real CRDT: after merging, it checks the resulting shape, and if
+the combination of edits crossed an edge, it reverts exactly the vertices
+responsible to their last known-good position and reports them — rather
+than either corrupting the shape or refusing to merge at all.
 
-## Existing players to differentiate from
-None commercial. Academic only.
+## How it works
 
-## Core risk to de-risk first
-Placemark — the closest commercial analog, a collaborative web-based geo editor — shut down in Nov 2023, with its founder stating plainly he "couldn't find a way to make it work as a sustainable bootstrapped startup." That predates the CRDT approach specifically, but it's a real signal that the buyer pool (offline-first multi-user GIS editing, mostly utility/telecom field crews) has proven narrow and hard to monetize even without the harder technical problem.
+A few pieces, each doing one job:
 
-## Scoring snapshot
+```mermaid
+flowchart TD
+    A["Ops: insert / move / delete a vertex<br/>(stable id, Lamport clock)"] --> B["LWW registers<br/>(vertex positions)"]
+    A --> C["RGA<br/>(ring order — insert/delete)"]
+    B --> D["PolygonDocument.materialize()<br/>topology safety net"]
+    C --> D
+    D --> E{Self-intersecting?}
+    E -- no --> F["valid: true — checkpoint this state"]
+    E -- yes --> G["revert the offending vertices<br/>to their last checkpoint,<br/>report them as conflicts"]
+```
 
-| Dimension | Score |
-|---|---|
-| Whitespace | 5/5 |
-| Market signal | 1/5 |
-| Feasibility | 2/5 |
-| Capital efficiency | 3/5 |
-| Buyer readiness | 1/5 |
+- **Ops** (`src/crdt/ops.ts`) — every edit is an `insert`, `move`, or
+  `delete` on one vertex, stamped with a Lamport clock id
+  (`src/crdt/ids.ts`). A vertex's identity *is* the id of the op that
+  created it — stable across edits, unlike an array index.
+- **LWW registers** (`src/crdt/lww.ts`) — a vertex's position is a
+  last-writer-wins register. Two concurrent moves converge to the same
+  winner on every replica, regardless of which order they're applied in.
+- **RGA** (`src/crdt/rga.ts`) — ring order (which vertices exist, and in
+  what sequence) is a Replicated Growable Array, a list CRDT. This is what
+  lets vertices be inserted and deleted, not just moved, while every
+  replica still converges to the same order.
+- **`PolygonDocument.materialize()`** (`src/crdt/document.ts`) — the
+  topology guarantee, layered on top of the above two. It always returns a
+  simple (non-self-intersecting) polygon: vertices whose combined edits
+  crossed an edge get reverted to their last known-valid position and
+  listed as conflicts, instead of being silently accepted or silently
+  dropped.
+- **`VertexStore`** (`src/crdt/vertex-store.ts`) — the actual "shared
+  polygon edges" primitive the project is named for. Two
+  `PolygonDocument`s (two neighboring parcels) constructed against the
+  *same* `VertexStore`, referencing the same vertex id, are sharing that
+  vertex's geometry. Move it through either parcel's edit stream and both
+  see the new position — there's no separate reconciliation step, because
+  there was never a second copy of the shared edge to reconcile.
 
-## Status
-This is a fresh scaffold, not a validated product yet. Start with `VALIDATION.md` before writing more than a thin prototype.
+On top of the engine:
 
-## Architecture
+- **Persistence** (`src/store/`) — an append-only op log on SQLite
+  (`node:sqlite`), so a document's full edit history survives a restart —
+  including the *incremental* checkpoint history `materialize()` needs to
+  repair a future conflict correctly, not just the raw ops.
+- **HTTP API** (`src/server/`) — the actual sync transport: a device pulls
+  everything it hasn't seen (`GET /v1/documents/:id/ops?since=`), applies
+  those ops locally in any order (the CRDT is what makes that safe), and
+  pushes its own new ops back (`POST /v1/documents/:id/ops`).
+- **Reference client** (`src/client/device.ts`) — the pull/edit-offline/push
+  loop a real client follows, including the two correctness rules that
+  aren't obvious until you build it (see the docstring): a push response
+  isn't proof you're caught up, and ops must be de-duplicated by id before
+  applying.
 
-**`src/crdt/`** — the engine: an operation-based CRDT. Vertices have stable
-ids (the id of the op that created them), positions are last-writer-wins
-registers keyed by a Lamport clock, and ring order is an RGA (a list CRDT)
-so vertices can be inserted and deleted, not just moved. Layered on top,
-`PolygonDocument.materialize()` is the topology guarantee: whatever
-combination of ops came in, it always returns a simple polygon — reverting
-exactly the edited vertices whose combination crossed an edge back to their
-last known-valid position, and reporting them, rather than silently handing
-back self-intersecting geometry. A vertex with no prior valid position
-(freshly inserted) can't be reverted, so if it's the only thing implicated
-in a crossing, `materialize()` says so (`valid: false`) instead of guessing;
-the same honesty applies to a delete that would drop a ring below 3
-vertices. The repair is conservative, not minimal — see the docstring on
-`PolygonDocument` for exactly what that trade-off means.
+## Applications
 
-The actual product primitive — two neighboring parcels *sharing* boundary
-vertices — is `VertexStore`: two `PolygonDocument`s constructed against the
-same store and referencing the same vertex id are sharing that vertex's
-geometry. Move it through either parcel's op stream and both see the new
-position; there's no separate reconciliation step because there was never a
-second copy of the edge to reconcile.
+This is the kind of tool you'd reach for wherever multiple people edit
+overlapping or shared geometry without a reliable connection between them:
 
-**`src/store/`** — persistence. `OpLogStore` is an append-only, per-document
-op log on SQLite (`node:sqlite`, no native dependency to build). Every push
-is tagged with a batch number, because `materialize()`'s checkpoint history
-has to be rebuilt the same incremental way it was built live — see the
-docstring on `OpLogStore` for why a single flat replay after a restart isn't
-equivalent. `DocumentStore` ties the log to `PolygonDocument`: `create`,
-`push`, `materialize`, `opsSince`.
+- **Land parcel / cadastral editing** — survey and county-records teams
+  updating adjoining parcel boundaries, where two parcels genuinely share
+  the same physical edge and both records need to agree on it.
+- **Utility and telecom field crews** — marking easements, right-of-way
+  boundaries, or service areas from a truck or a job site with no signal,
+  syncing once back at the depot.
+- **Collaborative GIS editors** — the merge layer underneath a
+  Placemark-style web tool where several people edit the same map at once.
+- **Conservation, agriculture, and disaster-response mapping** — field
+  teams delineating plots, burn areas, or damage zones offline, merging
+  results once reconnected.
 
-**`src/server/`** — the HTTP API, and the actual sync transport: a device
-pulls everything after the highest seq it's seen (`GET .../ops?since=`),
-applies those ops locally in any order (the CRDT is what makes that safe),
-and pushes its own new ops back (`POST .../ops`). Bearer-token auth against
-a static key list (`GEOMERGE_API_KEYS`), structured JSON errors, request
-logging.
+Anywhere the alternative is "whoever syncs last wins, and hope the shape is
+still valid," this replaces that with a guarantee.
 
-**`src/client/device.ts`** — a reference client for that loop. Building it
-surfaced two real correctness bugs, both now covered by
-`tests/client-sync.test.ts` (which spins up an actual `http.Server` and
-proves two independent devices converge to identical state): a push
-response can't be trusted to mean "I'm caught up," only a pull can; and ops
-must be deduped by id before applying, because reapplying an `insert` isn't
-safe the way reapplying a `move` is (the RGA has no duplicate-id guard).
+## Tech stack
 
-**`src/merge.ts`** — a separate, simpler convenience path for when you only
-have two GeoJSON snapshots and no operation history: a one-shot diff against
-a common base. No stable vertex ids, no insert/delete. Good enough for a
-one-off comparison; not the real engine, and not persisted.
+| Layer | Choice | Why |
+|---|---|---|
+| Language | TypeScript (strict) | The CRDT logic leans hard on discriminated unions and exhaustiveness; worth the type overhead. |
+| Runtime | Node.js ≥ 22.5 | Needed for `node:sqlite`. |
+| Persistence | `node:sqlite` | Built into Node — no native module to compile, no separate DB to run for a single-node deployment. |
+| HTTP API | Express 5 | Small surface area (5 routes), no need for more. |
+| Testing | Vitest, Supertest | Vitest for unit/CRDT convergence tests; Supertest for HTTP integration tests against the real Express app. |
+| Dev runtime | tsx | Runs TypeScript directly, no build step, matches the "ugly working prototype" pace this started at. |
+| CI | GitHub Actions | Typecheck + full suite on every push/PR. |
+
+No geometry library (Turf, JSTS, etc.) — the self-intersection check
+(`src/topology.ts`) is a plain segment-intersection sweep, since that's all
+this needs and it keeps the dependency list short.
 
 ## Running it
 
 ```bash
 npm install
-npm test               # 53 tests: RGA/LWW convergence, topology repair, persistence-across-restart, real HTTP sync
+npm test               # 53 tests: CRDT convergence, topology repair, persistence-across-restart, real HTTP sync
 npm run typecheck
 
 npm run demo           # concurrent moves: two crews drag opposite ends of a shared notch
@@ -99,7 +137,19 @@ npm run merge -- fixtures/base.geojson fixtures/crew-a.geojson fixtures/crew-b.g
 GEOMERGE_API_KEYS=dev-key npm run server   # API on :8787, sqlite at ./geomerge.sqlite
 ```
 
-With the server running:
+## API reference
+
+All routes except `/healthz` require `Authorization: Bearer <key>` when
+`GEOMERGE_API_KEYS` is set.
+
+| Method & path | Body | Does |
+|---|---|---|
+| `GET /healthz` | — | Liveness check, no auth. |
+| `GET /v1/documents` | — | List document ids. |
+| `POST /v1/documents` | `{ id?, feature }` or `{ id?, ops }` | Create a document from a GeoJSON Polygon, or from a raw genesis op array. |
+| `GET /v1/documents/:id` | — | Current materialized state as a GeoJSON Feature (`properties.conflicts`, `properties.valid`), plus the latest seq. |
+| `POST /v1/documents/:id/ops` | `{ ops }` | Push a batch of ops (a client's local edits). Returns the assigned seq range and the new materialized state. |
+| `GET /v1/documents/:id/ops?since=N` | — | Pull ops after seq `N`, for a device catching up. |
 
 ```bash
 curl -X POST localhost:8787/v1/documents \
@@ -109,8 +159,20 @@ curl -X POST localhost:8787/v1/documents \
 curl localhost:8787/v1/documents/parcel-1 -H "Authorization: Bearer dev-key"
 ```
 
-CI (`.github/workflows/ci.yml`) runs typecheck + the full test suite on
-every push and PR.
+## Repository map
+
+```
+src/crdt/       the engine — ids, lww, rga, ops, document, vertex-store, geojson-adapter
+src/store/      persistence — op-log (SQLite), document-store (replay + checkpointing)
+src/server/     HTTP API — app, auth, validate, errors, main (entrypoint)
+src/client/     reference sync client (device.ts)
+src/topology.ts self-intersection check, shared by the CRDT engine and the snapshot path
+src/merge.ts    a separate, simpler convenience path: one-shot diff of two GeoJSON
+                snapshots against a common base, for when there's no op history at all
+src/cli.ts      demo/merge command-line entry points
+tests/          53 tests: RGA & LWW convergence, topology repair, persistence, HTTP, e2e sync
+fixtures/       sample GeoJSON for the snapshot-diff path
+```
 
 ## Known limitations, honestly
 
@@ -128,3 +190,10 @@ every push and PR.
 - **Ops are assumed delivered at most once per replica.** The client dedupes
   by id to protect against re-pulling its own already-applied ops, but
   there's no general exactly-once transport guarantee baked in below that.
+
+## Project status
+
+This started as a market-validation scaffold, not a committed product —
+see `AGENTS.md` and `VALIDATION.md` for the original discovery-call plan
+and decision gate. The engine above exists to make the core technical risk
+concrete, not as proof the business case is validated yet.

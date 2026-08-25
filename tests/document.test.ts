@@ -127,6 +127,73 @@ describe("PolygonDocument — concurrent inserts", () => {
   });
 });
 
+describe("PolygonDocument — structural degeneracy", () => {
+  it("reports valid: false, not a 2-vertex 'polygon', when concurrent deletes drop the ring below 3", () => {
+    const { doc, ids } = buildBaseDocument();
+
+    doc.apply({ type: "delete", id: id("crewA", 100), vertex: ids[0]! });
+    doc.apply({ type: "delete", id: id("crewA", 101), vertex: ids[1]! });
+    doc.apply({ type: "delete", id: id("crewB", 100), vertex: ids[2]! });
+    doc.apply({ type: "delete", id: id("crewB", 101), vertex: ids[3]! });
+
+    const result = doc.materialize();
+    expect(result.valid).toBe(false);
+    expect(result.polygon).toEqual([]);
+  });
+});
+
+describe("PolygonDocument — three or more concurrent editors", () => {
+  it("applies non-conflicting concurrent edits from three actors regardless of application order", () => {
+    const base = buildBaseDocument();
+    const [v0, , v2, , , v5] = base.ids;
+    const moveA: MoveVertexOp = { type: "move", id: id("crewA", 100), vertex: v0!, position: [-2, -2] };
+    const moveB: MoveVertexOp = { type: "move", id: id("crewB", 100), vertex: v2!, position: [12, 12] };
+    const moveC: MoveVertexOp = { type: "move", id: id("crewC", 100), vertex: v5!, position: [-2, 12] };
+    const ops = [moveA, moveB, moveC];
+
+    const permutations = [
+      [ops[0]!, ops[1]!, ops[2]!],
+      [ops[2]!, ops[0]!, ops[1]!],
+      [ops[1]!, ops[2]!, ops[0]!],
+    ];
+
+    const results = permutations.map((order) => {
+      const doc = base.doc.clone();
+      doc.applyAll(order);
+      return doc.materialize();
+    });
+
+    expect(results[1]).toEqual(results[0]);
+    expect(results[2]).toEqual(results[0]);
+    expect(results[0]!.valid).toBe(true);
+    expect(results[0]!.polygon).toContainEqual([-2, -2]);
+    expect(results[0]!.polygon).toContainEqual([12, 12]);
+    expect(results[0]!.polygon).toContainEqual([-2, 12]);
+  });
+
+  it("still isolates just the conflicting vertices when a third, unrelated editor is also concurrent", () => {
+    const base = buildBaseDocument();
+    const [v0, , , v3, v4] = base.ids;
+    // crewA's edit alone pushes v3 past the polygon's own right edge — that's
+    // the actual conflict. crewB and crewC each make an ordinary interior
+    // move to a vertex that doesn't participate in the resulting crossing.
+    const moveA: MoveVertexOp = { type: "move", id: id("crewA", 100), vertex: v3!, position: [11, 6] };
+    const moveB: MoveVertexOp = { type: "move", id: id("crewB", 100), vertex: v4!, position: [5, 4.5] };
+    const moveC: MoveVertexOp = { type: "move", id: id("crewC", 100), vertex: v0!, position: [-0.2, -0.2] };
+
+    const doc = base.doc.clone();
+    doc.applyAll([moveA, moveB, moveC]);
+    const result = doc.materialize();
+
+    expect(result.valid).toBe(true);
+    // v4 shares the notch edge with v3, so it's swept into the same repair —
+    // materialize() reverts every changed endpoint of a crossing edge, not
+    // just the one vertex "at fault"; it doesn't attempt finer attribution.
+    expect(result.conflicts).toEqual([`${v3!.actor}:${v3!.clock}`, `${v4!.actor}:${v4!.clock}`]);
+    expect(result.polygon).toContainEqual([-0.2, -0.2]); // crewC's edit shares no edge with the conflict and survives untouched
+  });
+});
+
 describe("PolygonDocument — shared vertices across two features", () => {
   it("keeps a boundary vertex consistent across both parcels that reference it", () => {
     const store = new VertexStore();

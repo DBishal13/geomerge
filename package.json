@@ -9,13 +9,24 @@
     "demo:insert": "tsx src/cli.ts demo-insert",
     "demo:shared": "tsx src/cli.ts demo-shared",
     "merge": "tsx src/cli.ts merge",
+    "server": "tsx src/server/main.ts",
+    "server:dev": "tsx watch src/server/main.ts",
     "test": "vitest run",
     "typecheck": "tsc --noEmit"
   },
+  "engines": {
+    "node": ">=22.5.0"
+  },
   "devDependencies": {
+    "@types/express": "^5.0.6",
     "@types/node": "^22.10.2",
+    "@types/supertest": "^7.2.1",
+    "supertest": "^7.2.2",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vitest": "^4.1.11"
+  },
+  "dependencies": {
+    "express": "^5.2.1"
   }
 }

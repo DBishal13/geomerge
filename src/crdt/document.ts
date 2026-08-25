@@ -30,6 +30,18 @@ function pointsEqual(p: Point, q: Point): boolean {
  * shape. A vertex with no prior valid position (freshly inserted, never
  * checkpointed) can't be reverted, so if it's the only thing implicated in
  * a crossing, `materialize()` reports `valid: false` instead of guessing.
+ * The repair is conservative, not minimal: it reverts every changed
+ * endpoint of a crossing edge, not just whichever single vertex is "really"
+ * at fault, so a harmless edit that happens to share an edge with a bad one
+ * gets reverted too. Finding the smallest fix-up set is a harder problem
+ * this MVP doesn't attempt — it optimizes for "always valid," not "always
+ * minimal."
+ *
+ * The same honesty applies to structural degeneracy: concurrent deletes
+ * from two actors can independently be fine but combine to drop a ring
+ * below 3 vertices. There's no positional fallback to revert a delete to
+ * (unlike a move), so `materialize()` doesn't try to guess which delete to
+ * undo — it reports `valid: false` and leaves resolution to a human.
  */
 export class PolygonDocument {
   private lastValidPositions = new Map<string, Point>();
@@ -85,6 +97,11 @@ export class PolygonDocument {
 
   materialize(): DocumentMergeResult {
     const vertexIds = this.ring.toArray();
+
+    if (vertexIds.length < 3) {
+      return { polygon: [], conflicts: [], valid: false };
+    }
+
     const attempted = vertexIds.map((id) => this.store.get(id)!.value);
     const key = (id: OpId) => idToString(id);
 

@@ -1,0 +1,10 @@
+{
+  "type": "Feature",
+  "properties": { "name": "shared parcel boundary" },
+  "geometry": {
+    "type": "Polygon",
+    "coordinates": [
+      [[0, 0], [10, 0], [10, 10], [6, 4], [4, 4], [0, 10], [0, 0]]
+    ]
+  }
+}

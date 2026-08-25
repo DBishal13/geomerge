@@ -31,3 +31,48 @@ Placemark — the closest commercial analog, a collaborative web-based geo edito
 
 ## Status
 This is a fresh scaffold, not a validated product yet. Start with `VALIDATION.md` before writing more than a thin prototype.
+
+## Prototype
+
+Two things exist here now:
+
+**`src/crdt/`** — the real architecture: an operation-based CRDT engine.
+Vertices have stable ids (the id of the op that created them), positions are
+last-writer-wins registers keyed by a Lamport clock, and ring order is an RGA
+(a list CRDT) so vertices can be inserted and deleted, not just moved.
+Layered on top, `PolygonDocument.materialize()` is the topology guarantee:
+whatever combination of ops came in, it always returns a simple polygon —
+reverting exactly the edited vertices whose combination crossed an edge back
+to their last known-valid position, and reporting them, rather than silently
+handing back a self-intersecting shape. A vertex with no prior valid
+position (freshly inserted) can't be reverted, so if it's the only thing
+implicated in a crossing, `materialize()` says so (`valid: false`) instead of
+guessing.
+
+The actual product primitive — two neighboring parcels *sharing* boundary
+vertices — is `VertexStore`: two `PolygonDocument`s constructed against the
+same store and referencing the same vertex id are sharing that vertex's
+geometry. Move it through either parcel's op stream and both see the new
+position; there's no separate reconciliation step because there was never a
+second copy of the edge to reconcile.
+
+**`src/merge.ts`** — a simpler, separate convenience path for when you only
+have two GeoJSON snapshots and no operation history: a one-shot diff against
+a common base. No stable vertex ids, no insert/delete, just three matching
+rings. Good enough for a one-off comparison; not the real engine.
+
+```bash
+npm install
+npm run demo          # concurrent moves: two crews drag opposite ends of a shared notch
+npm run demo:insert   # concurrent inserts: two crews add a point on the same edge
+npm run demo:shared   # two parcels sharing a boundary vertex stay consistent across a move
+npm test               # 25 tests: RGA/LWW convergence, topology repair, shared-vertex consistency
+npm run merge -- fixtures/base.geojson fixtures/crew-a.geojson fixtures/crew-b.geojson
+```
+
+Known limitations, honestly: no holes or multi-polygons; the RGA's
+concurrent-insert tie-break is the standard sibling-of-one-origin rule, not
+the deeper interleaving-free ordering some list CRDTs add for many-actor
+editing; ops are assumed applied at most once, in causal order (no network
+transport or op-log persistence yet — that's the next real piece of work).
+See the docstrings in `src/crdt/` for where each of these lives in the code.

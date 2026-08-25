@@ -1,0 +1,21 @@
+{
+  "name": "geomerge",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "description": "Topology-preserving offline merge for shared polygon edges.",
+  "scripts": {
+    "demo": "tsx src/cli.ts demo",
+    "demo:insert": "tsx src/cli.ts demo-insert",
+    "demo:shared": "tsx src/cli.ts demo-shared",
+    "merge": "tsx src/cli.ts merge",
+    "test": "vitest run",
+    "typecheck": "tsc --noEmit"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vitest": "^4.1.11"
+  }
+}

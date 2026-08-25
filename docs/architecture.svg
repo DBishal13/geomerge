@@ -1,0 +1,182 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1280 1360" width="1280" height="1360" role="img" aria-label="Diagram: Device A and Device B each hold a local PolygonDocument and edit it offline. Each pushes new ops to the Sync API and pulls ops since its last-seen sequence number. The API appends pushed ops as a batch to the SQLite op log and replays batches to reconstruct state. Detail panel: materialize() compares a naively combined polygon, which self-intersects where two independently-moved vertices cross, against the materialized result, where those same vertices are reverted to their last checkpointed position and listed as conflicts.">
+  <title>Geomerge — Sync Architecture</title>
+
+  <defs>
+    <style>
+      .heading { font-family: "Big Shoulders Display", "Arial Narrow", sans-serif; font-weight: 700; }
+      .mono { font-family: "IBM Plex Mono", ui-monospace, "SF Mono", Consolas, monospace; }
+      .body { font-family: "Archivo", "Helvetica Neue", Arial, sans-serif; }
+    </style>
+    <marker id="arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+      <path d="M0,0 L10,5 L0,10 z" fill="currentColor" />
+    </marker>
+  </defs>
+
+  <!-- background: this diagram is deliberately single-theme (blueprint), so it paints its own ground -->
+  <rect x="0" y="0" width="1280" height="1360" fill="#0d2843" />
+
+  <!-- drafting frame -->
+  <rect x="16" y="16" width="1248" height="1328" fill="none" stroke="#3a5c80" stroke-width="1.5" />
+  <g stroke="#d7e8f7" stroke-width="2">
+    <path d="M16,40 V16 H40" fill="none" />
+    <path d="M1240,16 H1264 V40" fill="none" />
+    <path d="M1264,1320 V1344 H1240" fill="none" />
+    <path d="M40,1344 H16 V1320" fill="none" />
+  </g>
+
+  <!-- title block -->
+  <text x="60" y="60" class="heading" font-size="34" fill="#d7e8f7" letter-spacing="0.01em">GEOMERGE — SYNC ARCHITECTURE</text>
+  <text x="944" y="52" text-anchor="end" class="mono" font-size="12" fill="#6f93b8">SHEET 1/1 · REV A</text>
+  <text x="1220" y="52" text-anchor="end" class="mono" font-size="12" fill="#6f93b8">SCALE: NOT TO SCALE</text>
+
+  <!-- ============ SECTION 01 — SYNC FLOW ============ -->
+  <text x="60" y="106" class="mono" font-size="15" fill="#6f93b8" letter-spacing="0.06em">01 — OFFLINE SYNC LOOP</text>
+  <line x1="60" y1="118" x2="1220" y2="118" stroke="#3a5c80" stroke-width="1" />
+
+  <!-- Device A -->
+  <rect x="60" y="150" width="300" height="150" rx="4" fill="#123a5e" stroke="#d7e8f7" stroke-width="1.5" />
+  <text x="84" y="186" class="heading" font-size="24" fill="#d7e8f7">DEVICE A</text>
+  <text x="84" y="208" class="mono" font-size="13" fill="#6f93b8">actor: crewA · offline</text>
+  <g transform="translate(84,220) scale(2.1)">
+    <polygon points="4,36 34,36 34,14 19,4 4,14" fill="none" stroke="#6f93b8" stroke-width="1.4" />
+    <circle cx="19" cy="4" r="2.6" fill="#ff8a3d" />
+  </g>
+  <text x="230" y="272" class="mono" font-size="12" fill="#ff8a3d">move v3 →</text>
+  <text x="230" y="287" class="mono" font-size="12" fill="#6f93b8">local edit, no network</text>
+
+  <!-- Device B -->
+  <rect x="60" y="450" width="300" height="150" rx="4" fill="#123a5e" stroke="#d7e8f7" stroke-width="1.5" />
+  <text x="84" y="486" class="heading" font-size="24" fill="#d7e8f7">DEVICE B</text>
+  <text x="84" y="508" class="mono" font-size="13" fill="#6f93b8">actor: crewB · offline</text>
+  <g transform="translate(84,520) scale(2.1)">
+    <polygon points="4,36 34,36 34,14 19,4 4,14" fill="none" stroke="#6f93b8" stroke-width="1.4" />
+    <circle cx="4" cy="14" r="2.6" fill="#ff8a3d" />
+  </g>
+  <text x="230" y="572" class="mono" font-size="12" fill="#ff8a3d">move v4 →</text>
+  <text x="230" y="587" class="mono" font-size="12" fill="#6f93b8">local edit, no network</text>
+
+  <!-- API -->
+  <rect x="520" y="200" width="260" height="340" rx="4" fill="#163f66" stroke="#d7e8f7" stroke-width="1.5" />
+  <text x="544" y="242" class="heading" font-size="24" fill="#d7e8f7">SYNC API</text>
+  <text x="544" y="266" class="mono" font-size="12.5" fill="#6f93b8">POST /v1/documents/:id/ops</text>
+  <text x="544" y="284" class="mono" font-size="12.5" fill="#6f93b8">GET  /v1/documents/:id/ops</text>
+  <line x1="544" y1="304" x2="756" y2="304" stroke="#3a5c80" />
+  <text x="544" y="328" class="mono" font-size="12" fill="#6f93b8">bearer-key auth</text>
+  <text x="544" y="346" class="mono" font-size="12" fill="#6f93b8">structured errors</text>
+  <text x="544" y="490" class="mono" font-size="11.5" fill="#3a5c80">→ see DETAIL 02</text>
+  <text x="544" y="508" class="mono" font-size="11.5" fill="#3a5c80">for materialize()</text>
+
+  <!-- Op Log -->
+  <rect x="920" y="200" width="300" height="340" rx="4" fill="#123a5e" stroke="#d7e8f7" stroke-width="1.5" />
+  <text x="944" y="242" class="heading" font-size="24" fill="#d7e8f7">OP LOG</text>
+  <text x="944" y="266" class="mono" font-size="12.5" fill="#6f93b8">sqlite · append-only</text>
+  <g>
+    <rect x="944" y="290" width="252" height="26" fill="none" stroke="#3a5c80" />
+    <rect x="944" y="320" width="252" height="26" fill="none" stroke="#3a5c80" />
+    <rect x="944" y="350" width="252" height="26" fill="none" stroke="#3a5c80" />
+    <rect x="944" y="380" width="252" height="26" fill="#163f66" stroke="#ff8a3d" stroke-width="1.5" />
+    <text x="956" y="308" class="mono" font-size="11" fill="#6f93b8">batch 1 · genesis (seq 1–6)</text>
+    <text x="956" y="338" class="mono" font-size="11" fill="#6f93b8">batch 2 · crewA move (seq 7)</text>
+    <text x="956" y="368" class="mono" font-size="11" fill="#6f93b8">batch 3 · crewB move (seq 8)</text>
+    <text x="956" y="398" class="mono" font-size="11" fill="#d7e8f7">batch N · newest push ←</text>
+  </g>
+  <text x="944" y="450" class="mono" font-size="12" fill="#6f93b8">replay = one materialize()</text>
+  <text x="944" y="468" class="mono" font-size="12" fill="#6f93b8">per batch, in order</text>
+
+  <!-- Device A <-> API arrows -->
+  <g stroke="#d7e8f7" stroke-width="2" fill="none" color="#d7e8f7">
+    <line x1="360" y1="216" x2="512" y2="242" marker-end="url(#arrow)" />
+  </g>
+  <text x="392" y="200" class="mono" font-size="12" fill="#d7e8f7">PUSH ops</text>
+  <g stroke="#6f93b8" stroke-width="1.75" stroke-dasharray="6 5" fill="none" color="#6f93b8">
+    <line x1="512" y1="276" x2="360" y2="254" marker-end="url(#arrow)" />
+  </g>
+  <text x="384" y="298" class="mono" font-size="12" fill="#6f93b8">PULL since seq</text>
+
+  <!-- Device B <-> API arrows -->
+  <g stroke="#d7e8f7" stroke-width="2" fill="none" color="#d7e8f7">
+    <line x1="360" y1="532" x2="512" y2="506" marker-end="url(#arrow)" />
+  </g>
+  <text x="392" y="552" class="mono" font-size="12" fill="#d7e8f7">PUSH ops</text>
+  <g stroke="#6f93b8" stroke-width="1.75" stroke-dasharray="6 5" fill="none" color="#6f93b8">
+    <line x1="512" y1="472" x2="360" y2="498" marker-end="url(#arrow)" />
+  </g>
+  <text x="384" y="456" class="mono" font-size="12" fill="#6f93b8">PULL since seq</text>
+
+  <!-- API <-> Op Log arrows -->
+  <g stroke="#d7e8f7" stroke-width="2" fill="none" color="#d7e8f7">
+    <line x1="782" y1="290" x2="916" y2="290" marker-end="url(#arrow)" />
+  </g>
+  <text x="798" y="280" class="mono" font-size="12" fill="#d7e8f7">APPEND batch</text>
+  <g stroke="#6f93b8" stroke-width="1.75" stroke-dasharray="6 5" fill="none" color="#6f93b8">
+    <line x1="916" y1="450" x2="782" y2="450" marker-end="url(#arrow)" />
+  </g>
+  <text x="792" y="470" class="mono" font-size="12" fill="#6f93b8">REPLAY on load</text>
+
+  <!-- ============ SECTION 02 — DETAIL: materialize() ============ -->
+  <text x="60" y="666" class="mono" font-size="15" fill="#6f93b8" letter-spacing="0.06em">02 — DETAIL · INSIDE materialize()</text>
+  <line x1="60" y1="678" x2="1220" y2="678" stroke="#3a5c80" stroke-width="1" />
+  <text x="60" y="706" font-size="14" fill="#6f93b8">Same notch boundary, two independent moves — v3 by crewA, v4 by crewB. Neither vertex conflicts field-by-field, but combined, the ring crosses itself.</text>
+
+  <!-- Panel 1: naive combine -->
+  <rect x="60" y="740" width="460" height="440" rx="4" fill="#123a5e" stroke="#ff8a3d" stroke-width="1.5" />
+  <text x="86" y="776" class="heading" font-size="21" fill="#ff8a3d">COMBINED (NAIVE)</text>
+  <text x="86" y="796" class="mono" font-size="12" fill="#6f93b8">no topology check — silently invalid</text>
+
+  <polygon points="138,1120 418,1120 418,840 446,952 110,952 138,840" fill="none" stroke="#ff8a3d" stroke-width="2.5" />
+  <g fill="#3a5c80">
+    <circle cx="138" cy="1120" r="4" /><circle cx="418" cy="1120" r="4" />
+    <circle cx="418" cy="840" r="4" /><circle cx="138" cy="840" r="4" />
+  </g>
+  <circle cx="446" cy="952" r="6.5" fill="#ff8a3d" />
+  <circle cx="110" cy="952" r="6.5" fill="#ff8a3d" />
+  <g stroke="#ff8a3d" stroke-width="2.5">
+    <line x1="412" y1="946" x2="424" y2="958" /><line x1="424" y1="946" x2="412" y2="958" />
+    <line x1="132" y1="946" x2="144" y2="958" /><line x1="144" y1="946" x2="132" y2="958" />
+  </g>
+
+  <text x="86" y="1148" class="mono" font-size="12.5" fill="#d7e8f7">v3 → (11, 6)   v4 → (−1, 6)</text>
+  <text x="86" y="1168" class="mono" font-size="12.5" fill="#ff8a3d">⨯ 2 edge crossings detected</text>
+
+  <!-- connector -->
+  <g stroke="#d7e8f7" stroke-width="2" fill="none" color="#d7e8f7">
+    <line x1="524" y1="950" x2="696" y2="950" marker-end="url(#arrow)" />
+  </g>
+  <text x="530" y="932" class="mono" font-size="11.5" fill="#6f93b8">revert offending</text>
+  <text x="530" y="974" class="mono" font-size="11.5" fill="#6f93b8">vertices to last</text>
+  <text x="530" y="996" class="mono" font-size="11.5" fill="#6f93b8">checkpoint</text>
+
+  <!-- Panel 2: materialized -->
+  <rect x="700" y="740" width="460" height="440" rx="4" fill="#123a5e" stroke="#5eead4" stroke-width="1.5" />
+  <text x="726" y="776" class="heading" font-size="21" fill="#5eead4">MATERIALIZED (SAFE)</text>
+  <text x="726" y="796" class="mono" font-size="12" fill="#6f93b8">always a simple polygon</text>
+
+  <polygon points="778,1120 1058,1120 1058,840 946,1008 890,1008 778,840" fill="none" stroke="#5eead4" stroke-width="2.5" />
+  <g fill="#3a5c80">
+    <circle cx="778" cy="1120" r="4" /><circle cx="1058" cy="1120" r="4" />
+    <circle cx="1058" cy="840" r="4" /><circle cx="778" cy="840" r="4" />
+  </g>
+  <circle cx="946" cy="1008" r="6.5" fill="#5eead4" />
+  <circle cx="890" cy="1008" r="6.5" fill="#5eead4" />
+
+  <text x="726" y="1148" class="mono" font-size="12.5" fill="#d7e8f7">v3, v4 → reverted to (6,4) / (4,4)</text>
+  <text x="726" y="1168" class="mono" font-size="12.5" fill="#5eead4">✓ valid — conflicts: [base:4, base:5]</text>
+
+  <!-- ============ SECTION 03 — LEGEND ============ -->
+  <text x="60" y="1226" class="mono" font-size="15" fill="#6f93b8" letter-spacing="0.06em">03 — LEGEND</text>
+  <line x1="60" y1="1238" x2="1220" y2="1238" stroke="#3a5c80" stroke-width="1" />
+
+  <g stroke="#d7e8f7" stroke-width="2"><line x1="60" y1="1272" x2="110" y2="1272" /></g>
+  <text x="122" y="1277" class="mono" font-size="13" fill="#6f93b8">push / append — data flow</text>
+
+  <g stroke="#6f93b8" stroke-width="1.75" stroke-dasharray="6 5"><line x1="380" y1="1272" x2="430" y2="1272" /></g>
+  <text x="442" y="1277" class="mono" font-size="13" fill="#6f93b8">pull / replay — reconstruction</text>
+
+  <circle cx="760" cy="1272" r="6.5" fill="#ff8a3d" />
+  <text x="778" y="1277" class="mono" font-size="13" fill="#6f93b8">vertex reverted (conflict)</text>
+
+  <circle cx="1020" cy="1272" r="6.5" fill="#5eead4" />
+  <text x="1038" y="1277" class="mono" font-size="13" fill="#6f93b8">vertex checkpointed (valid)</text>
+
+  <text x="60" y="1330" class="mono" font-size="11" fill="#3a5c80">geomerge — operation-based CRDT for shared polygon edges · diagram generated from src/crdt/demo-moves.ts, src/store/op-log.ts, src/server/app.ts</text>
+</svg>

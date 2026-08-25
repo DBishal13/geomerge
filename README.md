@@ -32,18 +32,11 @@ than either corrupting the shape or refusing to merge at all.
 
 ## How it works
 
-A few pieces, each doing one job:
+<img src="docs/architecture.svg" alt="Geomerge sync architecture: two offline devices push and pull ops through the Sync API, which appends batches to a SQLite op log; a detail panel shows materialize() reverting the two vertices whose combined edits would otherwise self-intersect." width="100%" />
 
-```mermaid
-flowchart TD
-    A["Ops: insert / move / delete a vertex<br/>(stable id, Lamport clock)"] --> B["LWW registers<br/>(vertex positions)"]
-    A --> C["RGA<br/>(ring order — insert/delete)"]
-    B --> D["PolygonDocument.materialize()<br/>topology safety net"]
-    C --> D
-    D --> E{Self-intersecting?}
-    E -- no --> F["valid: true — checkpoint this state"]
-    E -- yes --> G["revert the offending vertices<br/>to their last checkpoint,<br/>report them as conflicts"]
-```
+*Vector source: [`docs/architecture.svg`](docs/architecture.svg) · raster copy: [`docs/architecture.png`](docs/architecture.png).*
+
+A few pieces, each doing one job:
 
 - **Ops** (`src/crdt/ops.ts`) — every edit is an `insert`, `move`, or
   `delete` on one vertex, stamped with a Lamport clock id

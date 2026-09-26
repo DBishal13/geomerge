@@ -71,7 +71,7 @@ someone else changed first, the API returns
 editor makes you resolve it by hand. Nothing breaks silently, but every
 conflict needs a person.
 
-**PostGIS Topology.** This stores shared edges once and keeps them
+**[PostGIS Topology](https://postgis.net/docs/Topology.html).** This stores shared edges once and keeps them
 consistent, but it's a central database. It doesn't help two devices that
 were offline at the same time.
 
@@ -149,3 +149,18 @@ npm test          # 56 tests: convergence, order-independent repair, persistence
 The code is MIT-licensed. If you work on offline field editing and have hit
 this problem, or solved it differently, I'd like to hear how. Open an issue
 on the repo.
+
+## References
+
+1. Esri. [Sync](https://doc.arcgis.com/en/field-maps/ios/use-maps/sync.htm). *ArcGIS Field Maps documentation.*
+2. Esri. [Resolve synchronization conflicts manually](https://doc.esri.com/en/arcgis-pro/latest/help/data/geodatabases/overview/resolve-synchronization-conflicts-manually.html). *ArcGIS Pro documentation.*
+3. Esri. [Synchronize Changes (Data Management)](https://pro.arcgis.com/en/pro-app/latest/tool-reference/data-management/synchronize-changes.htm). *ArcGIS Pro tool reference.*
+4. Esri. [Dirty areas created as a result of the reconcile process](https://doc.esri.com/en/arcgis-pro/latest/help/data/topologies/dirty-areas-created-as-a-result-of-the-reconcile-process.html). *ArcGIS Pro documentation.*
+5. Esri. [Synchronization and topology](https://doc.esri.com/en/arcgis-pro/latest/help/data/geodatabases/overview/synchronization-and-topology.html). *ArcGIS Pro documentation.*
+6. Mergin Maps. [Synchronisation](https://merginmaps.com/docs/manage/synchronisation/). *Mergin Maps documentation.*
+7. Mergin Maps. [geodiff: a library for handling diffs of geospatial data](https://github.com/MerginMaps/geodiff). *GitHub.*
+8. OpenStreetMap Wiki. [API v0.6](https://wiki.openstreetmap.org/wiki/API_v0.6).
+9. PostGIS. [Topology](https://postgis.net/docs/Topology.html). *PostGIS documentation.*
+10. Tom MacWright. [Placemark is going open source and shutting down](https://macwright.com/2023/11/13/placemark). 13 November 2023.
+
+*All links accessed September 2026.*

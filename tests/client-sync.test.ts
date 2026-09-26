@@ -59,18 +59,17 @@ describe("end-to-end offline sync over a real HTTP server", () => {
     expect(v4).toBeDefined();
 
     // Both go offline and edit independently — no network calls between these two lines.
-    const moveA: MoveVertexOp = { type: "move", id: deviceA.clock.tick(), vertex: v3!, position: [11, 6] };
+    // Each crew pulls one notch corner down. Either edit alone is valid.
+    const moveA: MoveVertexOp = { type: "move", id: deviceA.clock.tick(), vertex: v3!, position: [3, 2] };
     deviceA.editLocally([moveA]);
-    const moveB: MoveVertexOp = { type: "move", id: deviceB.clock.tick(), vertex: v4!, position: [-1, 6] };
+    const moveB: MoveVertexOp = { type: "move", id: deviceB.clock.tick(), vertex: v4!, position: [7, 2] };
     deviceB.editLocally([moveB]);
 
-    // This notch is tight enough that even a single crew's own bulge already
-    // trips the local safety net (it crosses the near side on its own) — so
-    // each device's *local* view is already self-repaired (reverted, valid)
-    // before either has heard from the other. That's still correct: the
-    // guarantee is "always valid," not "only intervenes once you're synced."
-    expect(deviceA.localState().valid).toBe(true);
-    expect(deviceB.localState().valid).toBe(true);
+    // Offline, each device sees its own edit applied, with nothing held back.
+    expect(deviceA.localState()).toMatchObject({ valid: true, conflicts: [] });
+    expect(deviceA.localState().polygon[3]).toEqual([3, 2]);
+    expect(deviceB.localState()).toMatchObject({ valid: true, conflicts: [] });
+    expect(deviceB.localState().polygon[4]).toEqual([7, 2]);
 
     // Back online: push local edits, then pull whatever the other device pushed.
     // Both devices' watermarks are still at the genesis pull (6) — a push
@@ -90,9 +89,13 @@ describe("end-to-end offline sync over a real HTTP server", () => {
       await fetch(`${baseUrl}/v1/documents/notch`, { headers: { Authorization: `Bearer ${API_KEY}` } })
     ).json()) as { geometry: { coordinates: [number, number][][] }; properties: { conflicts: string[] } };
 
+    // Together the two edits cross. Both devices and the server agree on the
+    // same repair: crewA's move sorts first and is kept; crewB's is held back.
     expect(stateA).toEqual(stateB);
     expect(stateA.valid).toBe(true);
-    expect(stateA.conflicts).toHaveLength(2);
+    expect(stateA.polygon[3]).toEqual([3, 2]);
+    expect(stateA.polygon[4]).toEqual([4, 4]);
+    expect(stateA.conflicts).toEqual([`${v4!.actor}:${v4!.clock}`]);
     expect(serverState.geometry.coordinates[0]).toEqual([stateA.polygon[0], ...stateA.polygon.slice(1), stateA.polygon[0]]);
     expect(serverState.properties.conflicts).toEqual(stateA.conflicts);
   });

@@ -32,7 +32,7 @@ function reportDocument(label: string, doc: PolygonDocument): DocumentMergeResul
   console.error(`  naive (no repair): ${isSimplePolygon(unsafeRing) ? "valid" : "SELF-INTERSECTING"}`);
   console.error(
     `  safe (materialize): ${result.valid ? "valid" : "UNRESOLVED"}${
-      result.conflicts.length ? ` (reverted: ${result.conflicts.join(", ")})` : ""
+      result.conflicts.length ? ` (held back: ${result.conflicts.join(", ")})` : ""
     }`,
   );
   return result;
@@ -43,10 +43,14 @@ function printPolygon(result: DocumentMergeResult): void {
 }
 
 async function demoMoves(): Promise<void> {
-  const { mergedDoc } = await import("./crdt/demo-moves.js");
-  console.error("Two crews independently drag opposite ends of a shared, notched boundary.\n");
-  const result = reportDocument("merge", mergedDoc);
-  console.error("");
+  const { crewAOnly, crewBOnly, mergedDoc, mergedReversed } = await import("./crdt/demo-moves.js");
+  console.error("Two crews each pull one corner of a notched boundary, offline.\n");
+  reportDocument("crew A's edit alone", crewAOnly);
+  reportDocument("crew B's edit alone", crewBOnly);
+  const result = reportDocument("both edits merged", mergedDoc);
+  const reversed = mergedReversed.materialize();
+  const same = JSON.stringify(reversed) === JSON.stringify(result);
+  console.error(`\nSame result with the edits applied in the opposite order: ${same ? "yes" : "NO"}\n`);
   printPolygon(result);
 }
 
@@ -58,7 +62,7 @@ async function demoInsert(): Promise<void> {
       "so there's no safe fallback position to revert either of them to.\n",
   );
   const result = reportDocument("merge", mergedDoc);
-  console.error("\nNeither new vertex has a checkpointed position, so Geomerge can't silently");
+  console.error("\nNeither new vertex has an earlier position to fall back to, so Geomerge can't silently");
   console.error("pick a fix here — it reports the shape as unresolved instead of guessing.\n");
   printPolygon(result);
 }

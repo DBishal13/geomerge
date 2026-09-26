@@ -50,7 +50,7 @@ describe("DocumentStore", () => {
     expect(store.materialize("parcel-1")).toEqual(result);
   });
 
-  it("preserves the incremental checkpoint history across a restart, not just the raw ops", () => {
+  it("returns the same result after a restart as the live document did", () => {
     const path = tmpDbPath();
     const { ops, vertexIds } = genesisOps();
     const [, , , v3, v4] = vertexIds;
@@ -58,7 +58,7 @@ describe("DocumentStore", () => {
     const moveB: MoveVertexOp = { type: "move", id: id("crewB", 100), vertex: v4!, position: [-1, 6] };
 
     const before = new DocumentStore(new OpLogStore(path));
-    before.create("parcel-1", ops); // batch 1: genesis, checkpointed valid
+    before.create("parcel-1", ops); // batch 1: genesis
     const liveResult = before.push("parcel-1", [moveA, moveB]).result; // batch 2: conflict, repaired
 
     // Simulate a server restart: fresh OpLogStore + DocumentStore over the same file.

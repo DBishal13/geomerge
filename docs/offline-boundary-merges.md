@@ -10,7 +10,7 @@ covers what goes wrong, how the main GIS platforms handle it today, and a
 small open-source prototype ([Geomerge](../README.md)) that tries a
 different approach.
 
-![Two valid offline edits merged vertex-by-vertex produce a self-intersecting polygon; Geomerge keeps it valid and reports the two edits as conflicts](merge-comparison.png)
+![Two valid offline edits merged vertex-by-vertex produce a self-intersecting polygon; Geomerge keeps crew A's edit, holds back crew B's, and reports it as a conflict](merge-comparison.png)
 
 ## The problem
 
@@ -104,19 +104,24 @@ approaches above:
 - **Edits merge at the vertex level.** Every vertex has a stable identity,
   and ring order uses a list CRDT. Edits to different parts of a boundary
   both survive, unlike whole-geometry last-writer-wins.
-- **The shape is checked as part of the merge.** After merging, Geomerge
-  checks whether the ring crosses itself. If it does, it reverts only the
-  edits responsible to their last valid position and reports them as
-  conflicts. The output is always a valid polygon plus a list of what needs
-  review, never a silently broken shape.
+- **The shape is checked as part of the merge.** Geomerge puts every edit
+  into one fixed order (by Lamport clock, then device id) and applies them
+  one at a time. An edit that would make the ring cross itself is held back
+  and reported as a conflict. The output is always a valid polygon plus a
+  list of what needs review, never a silently broken shape.
 - **Shared edges are stored once.** Adjacent parcels can reference the same
   vertex, as in OSM, so they can't drift apart. Moving that vertex through
   either parcel moves it for both.
-- **Every device reaches the same result**, whatever order edits arrive in.
+- **Every device reaches the same result.** The order depends only on the
+  edits themselves, not on when each device received them, so any two
+  devices holding the same edits compute the same polygon. A randomized
+  test checks this across many arrival orders.
 
-In the figure, the two edits really do conflict, so Geomerge holds both back
-and flags them, where a feature-level sync would keep one and quietly drop
-the other. When edits don't cross, both are kept.
+In the figure, the two edits really do conflict. Crew A's comes first in
+the fixed order, so it's applied; crew B's would then cross it, so it's
+held back and flagged for review. A feature-level sync would also keep only
+one, but it would pick by who synced last and drop the other silently. When
+edits don't cross, Geomerge keeps them all.
 
 ## Limits, honestly
 
@@ -126,8 +131,11 @@ This is a prototype, not a product:
 - A self-intersection check only. It doesn't enforce rules like "must not
   overlap" between different features.
 - One server process with a SQLite file, and basic API-key authentication.
-- When edits conflict, it holds them back for a person to review. It doesn't
-  work out a clever combined shape.
+- When edits conflict, which one wins is arbitrary: it's the one earlier in
+  the fixed order, not the "better" one. The other is flagged for a person
+  to review. It doesn't work out a clever combined shape.
+- Shared vertices are checked per parcel. A move that's fine for one parcel
+  but would break its neighbour is accepted by one and flagged by the other.
 
 ## Try it
 
@@ -135,7 +143,7 @@ This is a prototype, not a product:
 git clone https://github.com/DBishal13/geomerge.git
 cd geomerge && npm install
 npm run demo      # the scenario in the figure, through the CRDT engine
-npm test          # 53 tests: convergence, topology repair, persistence, HTTP sync
+npm test          # 56 tests: convergence, order-independent repair, persistence, HTTP sync
 ```
 
 The code is MIT-licensed. If you work on offline field editing and have hit

@@ -6,9 +6,9 @@ import type { Point } from "../types.js";
 
 /**
  * Two crews fetch the same notched parcel boundary, go offline, and each
- * drag their end of the notch outward — the same story as the earlier
- * snapshot-diff demo, now running on real ops with real Lamport clocks
- * instead of a one-shot base/a/b diff.
+ * pull one corner of the notch down and across. Either edit alone leaves a
+ * valid polygon; together the two notch edges cross. The same story as the
+ * snapshot-diff demo, now running on real ops with real Lamport clocks.
  */
 const hexagon: Point[] = [
   [0, 0],
@@ -32,7 +32,6 @@ for (const position of hexagon) {
   vertexIds.push(opId);
   previous = opId;
 }
-baseDoc.materialize(); // checkpoint: base is valid by construction
 
 // Each crew's clock observes the base document's clocks before going offline,
 // so their own edits are guaranteed causally ahead of it.
@@ -43,9 +42,20 @@ for (const vertexId of vertexIds) {
   crewBClock.observe(vertexId);
 }
 
-const moveA: MoveVertexOp = { type: "move", id: crewAClock.tick(), vertex: vertexIds[3]!, position: [11, 6] };
-const moveB: MoveVertexOp = { type: "move", id: crewBClock.tick(), vertex: vertexIds[4]!, position: [-1, 6] };
+const moveA: MoveVertexOp = { type: "move", id: crewAClock.tick(), vertex: vertexIds[3]!, position: [3, 2] };
+const moveB: MoveVertexOp = { type: "move", id: crewBClock.tick(), vertex: vertexIds[4]!, position: [7, 2] };
+
+export const crewAOnly = baseDoc.clone();
+crewAOnly.apply(moveA);
+
+export const crewBOnly = baseDoc.clone();
+crewBOnly.apply(moveB);
 
 export const mergedDoc = baseDoc.clone();
 mergedDoc.apply(moveA);
 mergedDoc.apply(moveB);
+
+/** The same two edits, arriving in the opposite order. */
+export const mergedReversed = baseDoc.clone();
+mergedReversed.apply(moveB);
+mergedReversed.apply(moveA);

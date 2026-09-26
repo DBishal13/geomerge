@@ -4,9 +4,9 @@ import type { PolygonOp } from "../crdt/ops.js";
 import { OpLogStore } from "./op-log.js";
 
 /**
- * Replays a document's persisted op log batch-by-batch (see `OpLogStore`'s
- * docstring for why batching matters), reconstructing both the live ring
- * state and its incremental valid-checkpoint history.
+ * Rebuilds a document by replaying its persisted op log. `materialize()` is
+ * a pure function of the ops, so a reload after a restart returns exactly
+ * what the live document returned.
  */
 export class DocumentStore {
   constructor(private readonly log: OpLogStore) {}
@@ -30,10 +30,7 @@ export class DocumentStore {
       throw new Error(`DocumentStore: unknown document ${id}`);
     }
     const document = new PolygonDocument(new VertexStore());
-    for (const batch of this.log.getBatches(id)) {
-      document.applyAll(batch.map((stored) => stored.op));
-      document.materialize();
-    }
+    document.applyAll(this.log.getAllOps(id).map((stored) => stored.op));
     return document;
   }
 

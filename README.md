@@ -15,8 +15,8 @@ shape.
 ## What problem this solves
 
 Picture two survey crews editing the same parcel boundary offline — one
-each end of a shared edge, on separate devices, no signal. Both edits are
-individually reasonable. Naively merging them field-by-field (take
+each end of a shared edge, on separate devices, no signal. Each edit on its
+own leaves a valid polygon. Naively merging them field-by-field (take
 whichever value came in, vertex by vertex — how a plain diff or a
 last-writer-wins merge works) can silently fold the polygon over itself: a
 self-intersecting "bowtie" shape that's invalid input to almost every
@@ -25,10 +25,11 @@ downstream GIS tool.
 General-purpose CRDT libraries (Automerge, Yjs, Loro) solve the *merge*
 problem for text and JSON, but have no concept of geometric validity — they
 don't know a self-intersecting ring is wrong. Geomerge adds that layer on
-top of a real CRDT: after merging, it checks the resulting shape, and if
-the combination of edits crossed an edge, it reverts exactly the vertices
-responsible to their last known-good position and reports them — rather
-than either corrupting the shape or refusing to merge at all.
+top of a real CRDT: it checks the shape as part of the merge, and if an
+edit would make the boundary cross itself, it holds that edit back and
+reports it — rather than either corrupting the shape or refusing to merge
+at all. Every device holding the same edits gets the same result, whatever
+order the edits arrived in.
 
 For how ArcGIS, QGIS/Mergin Maps and OpenStreetMap handle this today, and
 where Geomerge fits, see
@@ -54,11 +55,14 @@ A few pieces, each doing one job:
   lets vertices be inserted and deleted, not just moved, while every
   replica still converges to the same order.
 - **`PolygonDocument.materialize()`** (`src/crdt/document.ts`) — the
-  topology guarantee, layered on top of the above two. It always returns a
-  simple (non-self-intersecting) polygon: vertices whose combined edits
-  crossed an edge get reverted to their last known-valid position and
-  listed as conflicts, instead of being silently accepted or silently
-  dropped.
+  topology guarantee, layered on top of the above two. It replays every
+  move and delete in one canonical order (Lamport clock, then actor id) and
+  accepts each edit only if it doesn't add a self-intersection; rejected
+  edits are held back and listed as conflicts. When two concurrent edits
+  collide, the one earlier in that order is kept. Because the result
+  depends only on the set of ops, every replica computes the same polygon,
+  no matter the arrival order or how often it materialized along the way
+  (`tests/convergence.test.ts` checks this with randomized arrival orders).
 - **`VertexStore`** (`src/crdt/vertex-store.ts`) — the actual "shared
   polygon edges" primitive the project is named for. Two
   `PolygonDocument`s (two neighboring parcels) constructed against the
@@ -70,9 +74,8 @@ A few pieces, each doing one job:
 On top of the engine:
 
 - **Persistence** (`src/store/`) — an append-only op log on SQLite
-  (`node:sqlite`), so a document's full edit history survives a restart —
-  including the *incremental* checkpoint history `materialize()` needs to
-  repair a future conflict correctly, not just the raw ops.
+  (`node:sqlite`), so a document's full edit history survives a restart.
+  Replaying the log gives exactly the result the live document had.
 - **HTTP API** (`src/server/`) — the actual sync transport: a device pulls
   everything it hasn't seen (`GET /v1/documents/:id/ops?since=`), applies
   those ops locally in any order (the CRDT is what makes that safe), and
@@ -123,10 +126,10 @@ this needs and it keeps the dependency list short.
 
 ```bash
 npm install
-npm test               # 53 tests: CRDT convergence, topology repair, persistence-across-restart, real HTTP sync
+npm test               # 56 tests: CRDT convergence, order-independent repair, persistence, real HTTP sync
 npm run typecheck
 
-npm run demo           # concurrent moves: two crews drag opposite ends of a shared notch
+npm run demo           # concurrent moves: two valid edits that cross when combined
 npm run demo:insert    # concurrent inserts: two crews add a point on the same edge
 npm run demo:shared    # two parcels sharing a boundary vertex stay consistent across a move
 npm run merge -- fixtures/base.geojson fixtures/crew-a.geojson fixtures/crew-b.geojson
@@ -160,14 +163,14 @@ curl localhost:8787/v1/documents/parcel-1 -H "Authorization: Bearer dev-key"
 
 ```
 src/crdt/       the engine — ids, lww, rga, ops, document, vertex-store, geojson-adapter
-src/store/      persistence — op-log (SQLite), document-store (replay + checkpointing)
+src/store/      persistence — op-log (SQLite), document-store (replay)
 src/server/     HTTP API — app, auth, validate, errors, main (entrypoint)
 src/client/     reference sync client (device.ts)
 src/topology.ts self-intersection check, shared by the CRDT engine and the snapshot path
 src/merge.ts    a separate, simpler convenience path: one-shot diff of two GeoJSON
                 snapshots against a common base, for when there's no op history at all
 src/cli.ts      demo/merge command-line entry points
-tests/          53 tests: RGA & LWW convergence, topology repair, persistence, HTTP, e2e sync
+tests/          56 tests: RGA & LWW convergence, order-independent repair, persistence, HTTP, e2e sync
 fixtures/       sample GeoJSON for the snapshot-diff path
 ```
 
@@ -184,6 +187,16 @@ fixtures/       sample GeoJSON for the snapshot-diff path
   deeper interleaving-free ordering some list CRDTs add for heavily
   concurrent many-actor editing — fine for a handful of crews on one
   boundary, worth revisiting past that.
+- **Which of two colliding edits wins is arbitrary.** It's decided by
+  Lamport clock, then device id — the same on every device, but not by any
+  notion of which edit was "better". The other edit is flagged, not lost.
+- **Shared vertices are validated per parcel.** A move on a shared vertex
+  that keeps one parcel valid but would break its neighbour is accepted by
+  the first and flagged by the second, so the two can disagree about that
+  vertex until someone resolves it. It's reported, not silent.
+- **Inserts are never held back.** A new vertex has no earlier position to
+  fall back to, so if new vertices alone create a crossing the result is
+  reported as `valid: false`.
 - **Ops are assumed delivered at most once per replica.** The client dedupes
   by id to protect against re-pulling its own already-applied ops, but
   there's no general exactly-once transport guarantee baked in below that.

@@ -38,7 +38,6 @@ function buildBaseDocument(): { doc: PolygonDocument; store: VertexStore; ids: O
     ids.push(vertexId);
     previous = vertexId;
   }
-  doc.materialize(); // checkpoint: base is valid by construction
   return { doc, store, ids };
 }
 
@@ -117,8 +116,8 @@ describe("PolygonDocument — concurrent inserts", () => {
     const { doc, ids } = buildBaseDocument();
     const v1 = ids[1]!;
 
-    const deleteV1 = { type: "delete" as const, id: id("crewA", 1), vertex: v1 };
-    const insertAfterV1: InsertVertexOp = { type: "insert", id: id("crewB", 1), after: v1, position: [10, 1] };
+    const deleteV1 = { type: "delete" as const, id: id("crewA", 100), vertex: v1 };
+    const insertAfterV1: InsertVertexOp = { type: "insert", id: id("crewB", 100), after: v1, position: [10, 1] };
 
     expect(() => doc.applyAll([deleteV1, insertAfterV1])).not.toThrow();
     const result = doc.materialize();
@@ -128,17 +127,22 @@ describe("PolygonDocument — concurrent inserts", () => {
 });
 
 describe("PolygonDocument — structural degeneracy", () => {
-  it("reports valid: false, not a 2-vertex 'polygon', when concurrent deletes drop the ring below 3", () => {
-    const { doc, ids } = buildBaseDocument();
-
+  it("refuses the delete that would drop the ring below 3 vertices, and flags it", () => {
+    // A square: either crew's delete alone leaves a valid triangle, but both
+    // together would leave 2 vertices.
+    const doc = new PolygonDocument(new VertexStore());
+    const square: Point[] = [[0, 0], [10, 0], [10, 10], [0, 10]];
+    const ids = square.map((_, i) => id("base", i + 1));
+    square.forEach((position, i) => doc.apply({ type: "insert", id: ids[i]!, after: i ? ids[i - 1]! : null, position }));
     doc.apply({ type: "delete", id: id("crewA", 100), vertex: ids[0]! });
-    doc.apply({ type: "delete", id: id("crewA", 101), vertex: ids[1]! });
-    doc.apply({ type: "delete", id: id("crewB", 100), vertex: ids[2]! });
-    doc.apply({ type: "delete", id: id("crewB", 101), vertex: ids[3]! });
+    doc.apply({ type: "delete", id: id("crewB", 100), vertex: ids[1]! });
 
+    // Canonical order: crewA:100 then crewB:100. The first leaves a triangle;
+    // the second would leave 2 vertices, so it's refused and flagged.
     const result = doc.materialize();
-    expect(result.valid).toBe(false);
-    expect(result.polygon).toEqual([]);
+    expect(result.valid).toBe(true);
+    expect(result.polygon).toEqual([[10, 0], [10, 10], [0, 10]]);
+    expect(result.conflicts).toEqual([`${ids[1]!.actor}:${ids[1]!.clock}`]);
   });
 });
 
@@ -186,10 +190,10 @@ describe("PolygonDocument — three or more concurrent editors", () => {
     const result = doc.materialize();
 
     expect(result.valid).toBe(true);
-    // v4 shares the notch edge with v3, so it's swept into the same repair —
-    // materialize() reverts every changed endpoint of a crossing edge, not
-    // just the one vertex "at fault"; it doesn't attempt finer attribution.
-    expect(result.conflicts).toEqual([`${v3!.actor}:${v3!.clock}`, `${v4!.actor}:${v4!.clock}`]);
+    // Only crewA's move adds a crossing, so only v3 is held back. crewB's move
+    // of v4 shares the notch edge with v3 but is harmless, and is kept.
+    expect(result.conflicts).toEqual([`${v3!.actor}:${v3!.clock}`]);
+    expect(result.polygon).toContainEqual([5, 4.5]);
     expect(result.polygon).toContainEqual([-0.2, -0.2]); // crewC's edit shares no edge with the conflict and survives untouched
   });
 });

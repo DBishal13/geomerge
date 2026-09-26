@@ -36,12 +36,7 @@ export function opsFromFeature(feature: PolygonFeature, clock: LamportClock): { 
   return { ops, vertexIds };
 }
 
-/**
- * Loads a real GeoJSON Polygon as a brand-new, checkpointed `PolygonDocument`
- * — for direct in-process use (demos, tests). Checkpoints immediately since
- * the loaded ring is valid by construction, so it's ready for
- * `materialize()` to revert into on a later merge.
- */
+/** Loads a real GeoJSON Polygon as a brand-new `PolygonDocument`, for direct in-process use (demos, tests). */
 export function documentFromFeature(
   feature: PolygonFeature,
   clock: LamportClock,
@@ -50,7 +45,6 @@ export function documentFromFeature(
   const { ops, vertexIds } = opsFromFeature(feature, clock);
   const document = new PolygonDocument(store);
   document.applyAll(ops);
-  document.materialize();
   return { document, store, vertexIds };
 }
 

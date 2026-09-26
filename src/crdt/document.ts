@@ -1,16 +1,22 @@
-import { idToString, type OpId } from "./ids.js";
+import { compareId, idToString, type OpId } from "./ids.js";
 import { RgaList } from "./rga.js";
 import { VertexStore } from "./vertex-store.js";
-import type { PolygonOp } from "./ops.js";
+import type { DeleteVertexOp, PolygonOp } from "./ops.js";
 import type { Point, Ring } from "../types.js";
 import { findSelfIntersections } from "../topology.js";
 
 export interface DocumentMergeResult {
   polygon: Ring;
-  /** Vertex ids (as strings) that were reverted to their last known-valid position. */
+  /**
+   * Vertex ids (as strings) where the returned polygon differs from the raw
+   * CRDT state, because a move or delete on that vertex was held back to keep
+   * the polygon valid.
+   */
   conflicts: string[];
   valid: boolean;
 }
+
+type Edit = { kind: "move"; id: OpId; index: number; position: Point } | { kind: "delete"; id: OpId; index: number };
 
 function pointsEqual(p: Point, q: Point): boolean {
   return p[0] === q[0] && p[1] === q[1];
@@ -23,28 +29,29 @@ function pointsEqual(p: Point, q: Point): boolean {
  * before a move that targets it, an insert before another insert anchored
  * on it) — this MVP doesn't do its own causal buffering.
  *
- * `materialize()` is the topology guarantee: it always returns a simple
- * polygon. Vertices whose edits (moves, or being newly inserted) combine to
- * cross an edge are reverted to their last known-valid position and listed
- * in `conflicts`, rather than silently handed back as a self-intersecting
- * shape. A vertex with no prior valid position (freshly inserted, never
- * checkpointed) can't be reverted, so if it's the only thing implicated in
- * a crossing, `materialize()` reports `valid: false` instead of guessing.
- * The repair is conservative, not minimal: it reverts every changed
- * endpoint of a crossing edge, not just whichever single vertex is "really"
- * at fault, so a harmless edit that happens to share an edge with a bad one
- * gets reverted too. Finding the smallest fix-up set is a harder problem
- * this MVP doesn't attempt — it optimizes for "always valid," not "always
- * minimal."
+ * `materialize()` is the topology guarantee, and it is a pure function of
+ * the set of ops applied: two replicas holding the same ops return the same
+ * result, no matter what order the ops arrived in or how often either
+ * replica materialized along the way. It starts from every vertex at its
+ * creation position, then replays every move and delete in one canonical
+ * order (`compareId`: Lamport clock, then actor), accepting each edit only
+ * if it doesn't add a self-intersection. A rejected edit is held back and
+ * its vertex is listed in `conflicts`. When two concurrent edits collide,
+ * the one earlier in that order is kept and the later one is flagged. The
+ * choice is arbitrary but identical on every replica.
  *
- * The same honesty applies to structural degeneracy: concurrent deletes
- * from two actors can independently be fine but combine to drop a ring
- * below 3 vertices. There's no positional fallback to revert a delete to
- * (unlike a move), so `materialize()` doesn't try to guess which delete to
- * undo — it reports `valid: false` and leaves resolution to a human.
+ * Deletes are held to the same rule, and also rejected if they would drop
+ * the ring below 3 vertices. Inserts are never rejected: a brand-new vertex
+ * has no earlier position to fall back to, so if new vertices alone create
+ * a crossing, `materialize()` reports `valid: false` rather than guessing.
+ *
+ * Shared vertices (see `VertexStore`) are validated per document: a move
+ * that keeps parcel P valid but would break neighbouring parcel Q is
+ * accepted by P and flagged by Q, so the disagreement is reported instead
+ * of silently hidden.
  */
 export class PolygonDocument {
-  private lastValidPositions = new Map<string, Point>();
+  private deletes = new Map<string, DeleteVertexOp>();
 
   constructor(
     private readonly store: VertexStore,
@@ -62,6 +69,7 @@ export class PolygonDocument {
         break;
       case "delete":
         this.ring.remove(op.vertex);
+        this.deletes.set(idToString(op.id), op);
         break;
     }
   }
@@ -86,7 +94,7 @@ export class PolygonDocument {
 
   clone(store = this.store.clone()): PolygonDocument {
     const copy = new PolygonDocument(store, this.ring.clone());
-    copy.lastValidPositions = new Map(this.lastValidPositions);
+    copy.deletes = new Map(this.deletes);
     return copy;
   }
 
@@ -96,58 +104,58 @@ export class PolygonDocument {
   }
 
   materialize(): DocumentMergeResult {
-    const vertexIds = this.ring.toArray();
+    // Every vertex ever placed in this ring, in ring order, starting live at its creation position.
+    const nodes = this.ring.allEntries();
+    const index = new Map(nodes.map((node, i) => [idToString(node.value), i]));
+    const position = nodes.map((node) => this.store.history(node.value)[0]!.position);
+    const live = nodes.map(() => true);
 
-    if (vertexIds.length < 3) {
+    const edits: Edit[] = [];
+    nodes.forEach((node, i) => {
+      for (const write of this.store.history(node.value).slice(1)) {
+        edits.push({ kind: "move", id: write.id, index: i, position: write.position });
+      }
+    });
+    for (const op of this.deletes.values()) {
+      const i = index.get(idToString(op.vertex));
+      if (i !== undefined) edits.push({ kind: "delete", id: op.id, index: i });
+    }
+    edits.sort((a, b) => compareId(a.id, b.id));
+
+    const currentRing = (): Ring => position.filter((_, i) => live[i]);
+    const liveCount = () => live.filter(Boolean).length;
+    const crossingCount = () => (liveCount() >= 3 ? findSelfIntersections(currentRing()).length : 0);
+
+    let crossings = crossingCount();
+    for (const edit of edits) {
+      const i = edit.index;
+      if (!live[i]) continue; // edits to an already-deleted vertex can't change the shape
+      if (edit.kind === "move") {
+        const previous = position[i]!;
+        position[i] = edit.position;
+        const after = crossingCount();
+        if (after > crossings) position[i] = previous;
+        else crossings = after;
+      } else {
+        if (liveCount() - 1 < 3) continue;
+        live[i] = false;
+        const after = crossingCount();
+        if (after > crossings) live[i] = true;
+        else crossings = after;
+      }
+    }
+
+    if (liveCount() < 3) {
       return { polygon: [], conflicts: [], valid: false };
     }
 
-    const attempted = vertexIds.map((id) => this.store.get(id)!.value);
-    const key = (id: OpId) => idToString(id);
-
-    const changed = vertexIds.map((id, i) => {
-      const lastValid = this.lastValidPositions.get(key(id));
-      return lastValid === undefined || !pointsEqual(lastValid, attempted[i]!);
+    const conflicts: string[] = [];
+    nodes.forEach((node, i) => {
+      if (!live[i]) return;
+      const heldBack = node.tombstone || !pointsEqual(position[i]!, this.store.get(node.value)!.value);
+      if (heldBack) conflicts.push(idToString(node.value));
     });
-    const revertible = vertexIds.map((id) => this.lastValidPositions.has(key(id)));
 
-    const reverted = new Set<number>();
-    const applyReverts = (): Ring =>
-      attempted.map((pt, i) => {
-        if (!reverted.has(i)) return pt;
-        return this.lastValidPositions.get(key(vertexIds[i]!)) ?? pt;
-      });
-
-    let ring = applyReverts();
-    let crossings = findSelfIntersections(ring);
-
-    let guard = vertexIds.length + 1;
-    while (crossings.length > 0 && guard-- > 0) {
-      let progressed = false;
-      for (const { edgeI, edgeJ } of crossings) {
-        for (const idx of [edgeI, (edgeI + 1) % ring.length, edgeJ, (edgeJ + 1) % ring.length]) {
-          if (changed[idx] && revertible[idx] && !reverted.has(idx)) {
-            reverted.add(idx);
-            progressed = true;
-          }
-        }
-      }
-      if (!progressed) break; // remaining crossing isn't ours to fix (unrevertible or pre-existing)
-      ring = applyReverts();
-      crossings = findSelfIntersections(ring);
-    }
-
-    const valid = crossings.length === 0;
-    if (valid) {
-      this.lastValidPositions = new Map(vertexIds.map((id, i) => [key(id), ring[i]!]));
-    }
-
-    return {
-      polygon: ring,
-      conflicts: Array.from(reverted)
-        .sort((a, b) => a - b)
-        .map((i) => key(vertexIds[i]!)),
-      valid,
-    };
+    return { polygon: currentRing(), conflicts, valid: crossings === 0 };
   }
 }

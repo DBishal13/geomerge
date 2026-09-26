@@ -14,16 +14,9 @@ export interface StoredOp {
  * back (`appendOps`). `seq` is just this log's position, unrelated to an
  * op's own Lamport clock.
  *
- * Every `appendOps` call is tagged with a `batch` number. That's not just
- * bookkeeping: `PolygonDocument.materialize()` builds up a "last known
- * valid position" checkpoint incrementally, one `materialize()` call at a
- * time, and that checkpoint history is what lets it repair a *future*
- * conflict by reverting to the right fallback. Replaying the whole op log
- * in one shot after a restart and calling `materialize()` only once would
- * flatten that history — a restart would forget which state was valid
- * right before an unresolved conflict. Replaying batch-by-batch, calling
- * `materialize()` once per batch (see `DocumentStore.load`), reconstructs
- * the same incremental checkpoint history live operation would have built.
+ * Every `appendOps` call is tagged with a `batch` number (one client push).
+ * The merge result doesn't depend on it — `materialize()` only looks at the
+ * set of ops — but it records which ops arrived together, for auditing.
  */
 export class OpLogStore {
   private readonly db: DatabaseSync;
@@ -76,7 +69,7 @@ export class OpLogStore {
     return row.maxBatch ?? 0;
   }
 
-  /** Appends `ops` as a single batch — one client push, one `materialize()` checkpoint on replay. */
+  /** Appends `ops` as a single batch (one client push). */
   appendOps(documentId: string, ops: PolygonOp[]): number[] {
     if (!this.documentExists(documentId)) {
       throw new Error(`OpLogStore: unknown document ${documentId}`);
@@ -104,7 +97,7 @@ export class OpLogStore {
     return this.getOpsSince(documentId, 0);
   }
 
-  /** Ops grouped by push batch, in original order — what `DocumentStore.load` replays. */
+  /** Ops grouped by push batch, in original order. */
   getBatches(documentId: string): StoredOp[][] {
     const rows = this.db
       .prepare("SELECT seq, batch, op_json FROM ops WHERE document_id = ? ORDER BY seq ASC")

@@ -24,8 +24,6 @@ import type { PolygonOp } from "../crdt/ops.js";
  *    harmless (LWW is idempotent), but reapplying an `insert` is not: the
  *    RGA has no duplicate-id guard and would splice the same vertex into
  *    the ring twice.
- *
- * `syncPull` checkpoints (once) only when it actually applied something new.
  */
 export class GeomergeDevice {
   readonly clock: LamportClock;
@@ -72,15 +70,12 @@ export class GeomergeDevice {
       }
       this.lastSeenSeq = Math.max(this.lastSeenSeq, seq);
     }
-    if (newlyApplied.length > 0) this.document.materialize();
     return newlyApplied;
   }
 
-  /** Applies ops locally (offline-safe — no network) and checkpoints. */
+  /** Applies ops locally (offline-safe — no network). */
   editLocally(ops: PolygonOp[]): void {
-    let appliedAny = false;
-    for (const op of ops) appliedAny = this.applyOnce(op) || appliedAny;
-    if (appliedAny) this.document.materialize();
+    for (const op of ops) this.applyOnce(op);
   }
 
   /** Sends ops to the server. They should already be applied locally (via `editLocally`) first. */

@@ -71,6 +71,11 @@ export class RgaList<T> {
     return this.nodes.filter((n) => !n.tombstone).map((n) => ({ id: n.id, value: n.value }));
   }
 
+  /** Every entry ever inserted, tombstoned or not, in sequence order. */
+  allEntries(): { id: OpId; value: T; tombstone: boolean }[] {
+    return this.nodes.map((n) => ({ id: n.id, value: n.value, tombstone: n.tombstone }));
+  }
+
   clone(): RgaList<T> {
     const copy = new RgaList<T>();
     copy.nodes = this.nodes.map((n) => ({ ...n }));

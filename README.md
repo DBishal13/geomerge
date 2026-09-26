@@ -30,6 +30,10 @@ the combination of edits crossed an edge, it reverts exactly the vertices
 responsible to their last known-good position and reports them — rather
 than either corrupting the shape or refusing to merge at all.
 
+For how ArcGIS, QGIS/Mergin Maps and OpenStreetMap handle this today, and
+where Geomerge fits, see
+[Offline edits to shared boundaries: a neglected merge problem](docs/offline-boundary-merges.md).
+
 ## How it works
 
 <img src="docs/architecture.svg" alt="Geomerge sync architecture: two offline devices push and pull ops through the Sync API, which appends batches to a SQLite op log; a detail panel shows materialize() reverting the two vertices whose combined edits would otherwise self-intersect." width="100%" />

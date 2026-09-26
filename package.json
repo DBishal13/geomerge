@@ -4,6 +4,12 @@
   "private": true,
   "type": "module",
   "description": "Topology-preserving offline merge for shared polygon edges.",
+  "license": "MIT",
+  "author": "Bishal Dhungana",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/DBishal13/geomerge.git"
+  },
   "scripts": {
     "demo": "tsx src/cli.ts demo",
     "demo:insert": "tsx src/cli.ts demo-insert",

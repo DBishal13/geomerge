@@ -186,7 +186,13 @@ fixtures/       sample GeoJSON for the snapshot-diff path
 
 ## Project status
 
-This started as a market-validation scaffold, not a committed product —
-see `AGENTS.md` and `VALIDATION.md` for the original discovery-call plan
-and decision gate. The engine above exists to make the core technical risk
-concrete, not as proof the business case is validated yet.
+Released as open source under the MIT license. This started as a
+market-validation scaffold (see `AGENTS.md` and `VALIDATION.md` for the
+original plan); commercial discovery isn't being pursued, so the code is
+published as-is for anyone who finds it useful. It works and is tested, but
+it is a prototype — read the limitations above before depending on it.
+Issues and pull requests are welcome.
+
+## License
+
+[MIT](LICENSE) © 2026 Bishal Dhungana
